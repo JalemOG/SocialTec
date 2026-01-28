@@ -1,5 +1,7 @@
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 from server.core.graph_service import GraphService
+
 
 class StatsService:
     def __init__(self, graph: GraphService):
@@ -7,25 +9,24 @@ class StatsService:
 
     def compute_stats(self) -> Dict[str, Any]:
         """
-        Retorna:
-        - max_user_id: usuario con más amigos
-        - max_friends: cantidad
-        - min_user_id: usuario con menos amigos
-        - min_friends: cantidad
-        - avg_friends: promedio
+        Devuelve:
+        - max_user_id, max_friends
+        - min_user_id, min_friends
+        - avg_friends
         """
         adj = self.graph.snapshot()
         users: List[str] = list(adj.keys())
 
         if not users:
             return {
-                "max_user_id": None, "max_friends": 0,
-                "min_user_id": None, "min_friends": 0,
-                "avg_friends": 0.0
+                "max_user_id": None,
+                "max_friends": 0,
+                "min_user_id": None,
+                "min_friends": 0,
+                "avg_friends": 0.0,
             }
 
         degrees = {u: len(adj[u]) for u in users}
-
         max_user = max(users, key=lambda u: degrees[u])
         min_user = min(users, key=lambda u: degrees[u])
         avg = sum(degrees.values()) / len(users)
@@ -35,5 +36,5 @@ class StatsService:
             "max_friends": degrees[max_user],
             "min_user_id": min_user,
             "min_friends": degrees[min_user],
-            "avg_friends": avg
+            "avg_friends": avg,
         }
