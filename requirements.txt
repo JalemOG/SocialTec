@@ -1,0 +1,5 @@
+passlib[bcrypt]
+cryptography
+networkx
+matplotlib
+pillow
