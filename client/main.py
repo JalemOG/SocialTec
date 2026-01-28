@@ -30,6 +30,9 @@ def main():
     # Ver perfil de Julian
     prof = c.request({"type": "GET_MY_PROFILE", "payload": {"user_id": id1}})
     print("GET_MY_PROFILE raw ->", prof)
+    print("PATH_BETWEEN ->", c.request({"type": "PATH_BETWEEN", "payload": {"src": id1, "dst": id2}}))
+    print("GRAPH_STATS ->", c.request({"type": "GRAPH_STATS"}))
+
 
     friends = prof["data"]["friends"]
     friends_sorted = merge_sort(friends, key=lambda f: f"{f['name']} {f['lastname']}".lower())

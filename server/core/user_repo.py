@@ -59,3 +59,6 @@ class UserRepository:
             if u["id"] == user_id:
                 return u
         return None
+    
+    def list_all(self):
+        return self._load()
