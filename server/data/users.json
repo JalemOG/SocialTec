@@ -1,0 +1,10 @@
+[
+  {
+    "id": "19b36d4e-4a14-4ce3-b2a8-8837262f83c7",
+    "name": "Julian",
+    "lastname": "Test",
+    "username": "julian123",
+    "password_hash": "$pbkdf2-sha256$29000$W4vxXssZA6DU.t9b6x0DgA$6bK9ygzDwWmAgjwq09t1vH1ShPifVH/838BpTJcWb50",
+    "photo_path": ""
+  }
+]
