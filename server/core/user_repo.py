@@ -42,3 +42,20 @@ class UserRepository:
         users.append(user)
         self._save(users)
         return user
+
+    def search_by_name(self, query: str):
+        q = query.strip().lower()
+        users = self._load()
+        results = []
+        for u in users:
+            full = f"{u['name']} {u['lastname']}".lower()
+            if q in full:
+                results.append({"id": u["id"], "name": u["name"], "lastname": u["lastname"], "username": u["username"], "photo_path": u.get("photo_path","")})
+        return results
+    
+    def get_by_id(self, user_id: str):
+        users = self._load()
+        for u in users:
+            if u["id"] == user_id:
+                return u
+        return None
