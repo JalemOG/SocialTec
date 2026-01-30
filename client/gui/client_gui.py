@@ -1,6 +1,6 @@
 # client/gui/client_gui.py
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox
 
 from shared.crypto import CryptoService
 from shared.config import FERNET_KEY, HOST, PORT
@@ -17,6 +17,13 @@ class ClientGUI:
         self.crypto = CryptoService(FERNET_KEY)
 
         self.current_user = None
+
+        # Ventanas abiertas (extra pro)
+        self.profile_win = None
+        self.profile_text = None
+
+        self.friends_win = None
+        self.friends_list = None
 
         # cerrar socket al cerrar ventana
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -118,13 +125,10 @@ class ClientGUI:
         self.welcome_lbl.pack(anchor="w", pady=(0, 10))
 
         ttk.Button(self.main_menu_frame, text="Ver mi perfil", command=self.view_profile).pack(fill=tk.X, pady=4)
-        ttk.Button(self.main_menu_frame, text="Buscar usuario", command=self.search_friend).pack(fill=tk.X, pady=4)
+        ttk.Button(self.main_menu_frame, text="Buscar usuario (lista clickeable)", command=self.search_friend).pack(fill=tk.X, pady=4)
         ttk.Button(self.main_menu_frame, text="Ver mis amigos", command=self.view_friends).pack(fill=tk.X, pady=4)
-        ttk.Button(self.main_menu_frame, text="Agregar amigo por username", command=self.add_friend_by_username).pack(fill=tk.X, pady=4)
-        ttk.Button(self.main_menu_frame, text="Eliminar amistad por username", command=self.remove_friend).pack(fill=tk.X, pady=4)
 
         ttk.Separator(self.main_menu_frame).pack(fill=tk.X, pady=10)
-
         ttk.Button(self.main_menu_frame, text="Cerrar sesión", command=self.logout).pack(fill=tk.X)
 
     def _show_only(self, frame: ttk.Frame):
@@ -170,24 +174,64 @@ class ClientGUI:
             self._friendly_error(resp, "No se pudo obtener el perfil.")
             return None
         return resp["data"]
+    
+    def refresh_open_views(self):
+        """
+        Extra pro:
+        Si están abiertas las ventanas de "Mi perfil" o "Mis amigos",
+        las refresca automáticamente (vuelve a pedir el perfil al server y actualiza UI).
+        """
+        data = self._get_profile()
+        if not data:
+            return
+
+        me = data["me"]
+        friends = data.get("friends", [])
+
+        # --- refrescar ventana de perfil ---
+        try:
+            if self.profile_win and self.profile_win.winfo_exists() and self.profile_text:
+                friends_text = "\n".join([f"@{f['username']} — {f['name']} {f['lastname']}" for f in friends]) or "(sin amigos)"
+                txt = (
+                    f"Usuario: @{me['username']}\n"
+                    f"Nombre: {me['name']} {me['lastname']}\n\n"
+                    f"Amigos:\n{friends_text}"
+                )
+                self.profile_text.config(state="normal")
+                self.profile_text.delete("1.0", tk.END)
+                self.profile_text.insert(tk.END, txt)
+                self.profile_text.config(state="disabled")
+        except Exception:
+            pass
+
+        # --- refrescar ventana de amigos ---
+        try:
+            if self.friends_win and self.friends_win.winfo_exists() and self.friends_list:
+                self.friends_list.delete(0, tk.END)
+
+                if not friends:
+                    self.friends_list.insert(tk.END, "(sin amigos)")
+                else:
+                    friends_sorted = sorted(friends, key=lambda f: f.get("username", ""))
+                    for f in friends_sorted:
+                        self.friends_list.insert(tk.END, f"@{f['username']} — {f['name']} {f['lastname']}")
+        except Exception:
+            pass
+
 
     def _find_user_by_username_exact(self, username: str) -> dict | None:
         """
-        Usa SEARCH_USER (que busca por nombre/substring) y filtra por username exacto.
-        Devuelve el user dict o None.
+        Busca por username exacto usando endpoint dedicado.
         """
         if not self.ensure_connected():
             return None
 
-        resp = self.client.request({"type": "SEARCH_USER", "payload": {"query": username}})
+        resp = self.client.request({"type": "GET_USER_BY_USERNAME", "payload": {"username": username}})
         if resp.get("status") != "ok":
-            self._friendly_error(resp, "No se pudo buscar el usuario.")
+            self._friendly_error(resp, "No se pudo buscar el usuario por username.")
             return None
 
-        for u in resp["data"].get("results", []):
-            if u.get("username", "").lower() == username.lower():
-                return u
-        return None
+        return resp["data"].get("user")
 
     # -----------------------
     # Actions
@@ -205,7 +249,7 @@ class ClientGUI:
             messagebox.showerror("Error", "Por favor complete todos los campos.")
             return
 
-        # Validación: username ya existe
+        # Validación: username ya existe (exact)
         existing = self._find_user_by_username_exact(username)
         if existing:
             messagebox.showerror("Error", "El nombre de usuario ya está registrado.")
@@ -265,104 +309,264 @@ class ClientGUI:
         me = data["me"]
         friends = data.get("friends", [])
 
-        friends_text = "\n".join([f"@{f['username']} — {f['name']} {f['lastname']}" for f in friends]) or "(sin amigos)"
-        txt = (
-            f"Usuario: @{me['username']}\n"
-            f"Nombre: {me['name']} {me['lastname']}\n\n"
-            f"Amigos:\n{friends_text}"
-        )
-        messagebox.showinfo("Mi perfil", txt)
+        # Si ya está abierta, traerla al frente y refrescar
+        if self.profile_win and self.profile_win.winfo_exists():
+            self.profile_win.lift()
+            self.profile_win.focus_force()
+            self.refresh_open_views()
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("Mi perfil")
+        win.geometry("520x420")
+        win.transient(self.root)
+
+        self.profile_win = win
+
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frm, text="Mi perfil", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 8))
+
+        txtw = tk.Text(frm, height=16, wrap="word")
+        txtw.pack(fill=tk.BOTH, expand=True)
+        self.profile_text = txtw
+
+        def on_close():
+            try:
+                self.profile_win = None
+                self.profile_text = None
+            finally:
+                win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+
+        # Pintar contenido inicial usando refresh
+        self.refresh_open_views()
 
     def view_friends(self):
         data = self._get_profile()
         if not data:
             return
 
-        friends = data.get("friends", [])
-        if not friends:
-            messagebox.showinfo("Mis amigos", "No tenés amigos todavía.")
+        # Si ya está abierta, traerla al frente y refrescar
+        if self.friends_win and self.friends_win.winfo_exists():
+            self.friends_win.lift()
+            self.friends_win.focus_force()
+            self.refresh_open_views()
             return
 
-        # Si querés ordenar por username aquí, lo hacemos simple (ya ordenás con MergeSort en client/main)
-        friends_sorted = sorted(friends, key=lambda f: f.get("username", ""))
+        win = tk.Toplevel(self.root)
+        win.title("Mis amigos")
+        win.geometry("520x420")
+        win.transient(self.root)
 
-        txt = "\n".join([f"@{f['username']} — {f['name']} {f['lastname']}" for f in friends_sorted])
-        messagebox.showinfo("Mis amigos", txt)
+        self.friends_win = win
+
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frm, text="Mis amigos", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 8))
+
+        lst = tk.Listbox(frm, height=16)
+        lst.pack(fill=tk.BOTH, expand=True)
+        self.friends_list = lst
+
+        def on_close():
+            try:
+                self.friends_win = None
+                self.friends_list = None
+            finally:
+                win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+
+        # Pintar contenido inicial usando refresh
+        self.refresh_open_views()
 
     def search_friend(self):
+        """
+        Ventana de búsqueda con lista clickeable y acciones:
+        - Agregar seleccionado (solo si NO es amigo ya)
+        - Eliminar seleccionado (solo si YA es amigo)
+        """
         if not self.ensure_connected():
             return
         if not self._require_login():
             return
 
-        query = simpledialog.askstring("Buscar usuario", "Buscá por nombre/username:")
-        if not query:
+        # Traer mi lista de amigos UNA sola vez para esta ventana
+        profile = self._get_profile()
+        if not profile:
             return
 
-        resp = self.client.request({"type": "SEARCH_USER", "payload": {"query": query}})
-        if resp.get("status") != "ok":
-            self._friendly_error(resp, "No se pudo realizar la búsqueda.")
-            return
+        friend_ids = {f["id"] for f in profile.get("friends", [])}
 
-        results = resp["data"].get("results", [])
-        if not results:
-            messagebox.showinfo("Resultados", "No se encontraron usuarios.")
-            return
+        win = tk.Toplevel(self.root)
+        win.title("Buscar usuarios")
+        win.geometry("560x420")
+        win.transient(self.root)
+        win.grab_set()
 
-        txt = "\n".join([f"@{u['username']} — {u['name']} {u['lastname']}" for u in results])
-        messagebox.showinfo("Resultados", txt)
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
 
-    def add_friend_by_username(self):
-        if not self.ensure_connected():
-            return
-        if not self._require_login():
-            return
+        ttk.Label(frm, text="Buscar por nombre/username (parcial):", font=("Segoe UI", 10, "bold")).pack(anchor="w")
 
-        uname = simpledialog.askstring("Agregar amigo", "Username exacto (ej: ana123):")
-        if not uname:
-            return
+        top = ttk.Frame(frm)
+        top.pack(fill=tk.X, pady=8)
 
-        friend = self._find_user_by_username_exact(uname)
-        if not friend:
-            messagebox.showinfo("Agregar amigo", "No se encontró ese username.")
-            return
+        q_entry = ttk.Entry(top)
+        q_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        if friend["id"] == self.current_user["id"]:
-            messagebox.showerror("Error", "No podés agregarte a vos mismo.")
-            return
+        results_list = tk.Listbox(frm, height=14)
+        results_list.pack(fill=tk.BOTH, expand=True, pady=(6, 8))
 
-        resp = self.client.request(
-            {"type": "ADD_FRIEND", "payload": {"a": self.current_user["id"], "b": friend["id"]}}
-        )
+        idx_to_user: list[dict] = []
 
-        if resp.get("status") == "ok":
-            messagebox.showinfo("Agregar amigo", f"Ahora sos amigo de @{friend['username']}.")
-        else:
-            self._friendly_error(resp, "No se pudo agregar al amigo.")
+        # botones
+        btns = ttk.Frame(frm)
+        btns.pack(fill=tk.X)
 
-    def remove_friend(self):
-        if not self.ensure_connected():
-            return
-        if not self._require_login():
-            return
+        add_btn = ttk.Button(btns, text="Agregar seleccionado")
+        remove_btn = ttk.Button(btns, text="Eliminar seleccionado")
+        close_btn = ttk.Button(btns, text="Cerrar", command=win.destroy)
 
-        uname = simpledialog.askstring("Eliminar amistad", "Username exacto a eliminar (ej: ana123):")
-        if not uname:
-            return
+        add_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        remove_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+        close_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        friend = self._find_user_by_username_exact(uname)
-        if not friend:
-            messagebox.showinfo("Eliminar amistad", "No se encontró ese username.")
-            return
+        # Estado inicial
+        add_btn.state(["disabled"])
+        remove_btn.state(["disabled"])
 
-        resp = self.client.request(
-            {"type": "REMOVE_FRIEND", "payload": {"a": self.current_user["id"], "b": friend["id"]}}
-        )
+        def refresh_buttons_for_selection():
+            sel = results_list.curselection()
+            if not sel or sel[0] >= len(idx_to_user):
+                add_btn.state(["disabled"])
+                remove_btn.state(["disabled"])
+                return
 
-        if resp.get("status") == "ok":
-            messagebox.showinfo("Eliminar amistad", f"Amistad eliminada con @{friend['username']}.")
-        else:
-            self._friendly_error(resp, "No se pudo eliminar la amistad.")
+            u = idx_to_user[sel[0]]
+            is_friend = u["id"] in friend_ids
+
+            if is_friend:
+                add_btn.state(["disabled"])
+                remove_btn.state(["!disabled"])
+            else:
+                add_btn.state(["!disabled"])
+                remove_btn.state(["disabled"])
+
+        def do_search():
+            query = q_entry.get().strip()
+            results_list.delete(0, tk.END)
+            idx_to_user.clear()
+
+            add_btn.state(["disabled"])
+            remove_btn.state(["disabled"])
+
+            if not query:
+                messagebox.showinfo("Buscar", "Escribí algo para buscar.")
+                return
+
+            resp = self.client.request({"type": "SEARCH_USER", "payload": {"query": query}})
+            if resp.get("status") != "ok":
+                self._friendly_error(resp, "No se pudo realizar la búsqueda.")
+                return
+
+            results = resp["data"].get("results", [])
+            if not results:
+                results_list.insert(tk.END, "(Sin resultados)")
+                return
+
+            # no mostrarte a vos mismo
+            results = [u for u in results if u.get("id") != self.current_user["id"]]
+            if not results:
+                results_list.insert(tk.END, "(Sin resultados)")
+                return
+
+            for u in results:
+                idx_to_user.append(u)
+                tag = " (amigo)" if u["id"] in friend_ids else ""
+                results_list.insert(tk.END, f"@{u['username']} — {u['name']} {u['lastname']}{tag}")
+
+        def get_selected_user() -> dict | None:
+            sel = results_list.curselection()
+            if not sel:
+                messagebox.showinfo("Seleccionar", "Seleccioná un usuario de la lista.")
+                return None
+            i = sel[0]
+            if i >= len(idx_to_user):
+                return None
+            return idx_to_user[i]
+
+        def add_selected():
+            u = get_selected_user()
+            if not u:
+                return
+
+            if u["id"] in friend_ids:
+                messagebox.showinfo("Agregar amigo", f"@{u['username']} ya está en tu lista de amigos.")
+                refresh_buttons_for_selection()
+                return
+
+            resp = self.client.request({"type": "ADD_FRIEND", "payload": {"a": self.current_user["id"], "b": u["id"]}})
+            if resp.get("status") == "ok":
+                messagebox.showinfo("Agregar amigo", f"Ahora sos amigo de @{u['username']}.")
+
+                friend_ids.add(u["id"])
+                
+                sel = results_list.curselection()
+                if sel:
+                    idx = sel[0]
+                    results_list.delete(idx)
+                    results_list.insert(idx, f"@{u['username']} — {u['name']} {u['lastname']} (amigo)")
+                    results_list.selection_set(idx)
+
+                refresh_buttons_for_selection()
+                self.refresh_open_views()
+                
+            else:
+                self._friendly_error(resp, "No se pudo agregar al amigo.")
+
+        def remove_selected():
+            u = get_selected_user()
+            if not u:
+                return
+
+            if u["id"] not in friend_ids:
+                messagebox.showinfo("Eliminar amistad", f"@{u['username']} no está en tu lista de amigos.")
+                refresh_buttons_for_selection()
+                return
+
+            resp = self.client.request({"type": "REMOVE_FRIEND", "payload": {"a": self.current_user["id"], "b": u["id"]}})
+            if resp.get("status") == "ok":
+                messagebox.showinfo("Eliminar amistad", f"Amistad eliminada con @{u['username']}.")
+
+                friend_ids.discard(u["id"])
+
+                sel = results_list.curselection()
+                if sel:
+                    idx = sel[0]
+                    results_list.delete(idx)
+                    results_list.insert(idx, f"@{u['username']} — {u['name']} {u['lastname']}")
+                    results_list.selection_set(idx)
+
+                refresh_buttons_for_selection()
+                self.refresh_open_views()
+
+            else:
+                self._friendly_error(resp, "No se pudo eliminar la amistad.")
+
+        add_btn.config(command=add_selected)
+        remove_btn.config(command=remove_selected)
+
+        ttk.Button(top, text="Buscar", command=do_search).pack(side=tk.LEFT, padx=8)
+
+        q_entry.bind("<Return>", lambda _e: do_search())
+        results_list.bind("<<ListboxSelect>>", lambda _e: refresh_buttons_for_selection())
+
+        q_entry.focus_set()
 
 
 def run():

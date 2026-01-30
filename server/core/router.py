@@ -67,7 +67,33 @@ class RequestRouter:
                 query = payload.get("query", "")
                 results = self.users.search_by_name(query)
                 return {"status": "ok", "data": {"results": results}}
+            
+                        # ----------------
+            # Get by username (exact)
+            # ----------------
+            if msg_type == "GET_USER_BY_USERNAME":
+                payload = req.get("payload", {})
+                username = (payload.get("username") or "").strip()
 
+                if not username:
+                    return {"status": "error", "error": "Missing username"}
+
+                user = self.users.get_by_username(username)
+                if not user:
+                    return {"status": "ok", "data": {"user": None}}
+
+                # devolver solo campos necesarios
+                return {
+                    "status": "ok",
+                    "data": {
+                        "user": {
+                            "id": user["id"],
+                            "name": user["name"],
+                            "lastname": user["lastname"],
+                            "username": user["username"],
+                        }
+                    },
+                }
             # ----------------
             # Profile (008)
             # ----------------

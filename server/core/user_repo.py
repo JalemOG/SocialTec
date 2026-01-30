@@ -60,5 +60,12 @@ class UserRepository:
                 return u
         return None
     
+    def get_by_username(self, username: str):
+        username = (username or "").strip().lower()
+        for u in self._load():
+            if (u.get("username") or "").lower() == username:
+                return u
+        return None
+
     def list_all(self):
         return self._load()
